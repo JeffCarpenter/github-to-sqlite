@@ -494,7 +494,7 @@ def fetch_user(username=None, token=None):
 def paginate(url, headers=None):
     url += ("&" if "?" in url else "?") + "per_page=100"
     sess = requests.Session()
-    retries = Retry(backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
+    retries = Retry(backoff_factor=0.1, raise_on_status=False, status_forcelist=[500, 502, 503, 504])
     sess.mount("https://", HTTPAdapter(max_retries=retries))
 
     while url:
