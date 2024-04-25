@@ -1,9 +1,15 @@
 import base64
+import sys
 import requests
 import re
 import time
 import urllib.parse
 import yaml
+
+
+from urllib3 import Retry
+from requests.adapters import HTTPAdapter
+
 
 FTS_CONFIG = {
     # table: columns
@@ -487,16 +493,20 @@ def fetch_user(username=None, token=None):
 
 def paginate(url, headers=None):
     url += ("&" if "?" in url else "?") + "per_page=100"
+    sess = requests.Session()
+    retries = Retry(backoff_factor=0.1)
+    sess.mount("https://", HTTPAdapter(max_retries=retries))
+
     while url:
-        response = requests.get(url, headers=headers)
+        response = sess.get(url, headers=headers)
         # For HTTP 204 no-content this yields an empty list
         if response.status_code == 204:
             return
         data = response.json()
         if isinstance(data, dict) and data.get("message"):
-            raise GitHubError.from_response(response)
+            print(GitHubError.from_response(response), file=sys.stderr)
         try:
-            url = response.links.get("next").get("url")
+            url = response.links.get("next").get("url") if response.status_code == 200 else url
         except AttributeError:
             url = None
         yield data
