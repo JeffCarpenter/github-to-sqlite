@@ -26,7 +26,27 @@ setup(
         [console_scripts]
         github-to-sqlite=github_to_sqlite.cli:cli
     """,
-    install_requires=["sqlite-utils>=2.7.2", "requests", "PyYAML"],
-    extras_require={"test": ["pytest", "requests-mock", "bs4"]},
+    install_requires=[
+        "sqlite-utils>=2.7.2",
+        "requests",
+        "PyYAML",
+        "sentence-transformers",
+        "sqlite-vec",
+        "nltk",
+        "onnx",
+        "pydantic>=2.0",
+        "tokenizers",
+    ],
+    extras_require={
+        "test": ["pytest", "pytest-cov", "requests-mock", "bs4"],
+        "semantic_chunkers": [
+            "semantic-chunkers @ https://github.com/aurelio-labs/semantic-chunkers/archive/refs/tags/v0.1.1.tar.gz"
+        ],
+        "sentence-transformers": ["sentence-transformers[onnx]"],
+        "gpu": ["sentence-transformers[onnx-gpu]"],
+        "semantic-transformers": [
+            "semantic-chunkers @ https://github.com/aurelio-labs/semantic-chunkers/archive/refs/tags/v0.1.1.tar.gz"
+        ],
+    },
     tests_require=["github-to-sqlite[test]"],
 )
