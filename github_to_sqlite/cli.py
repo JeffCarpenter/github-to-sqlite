@@ -637,6 +637,19 @@ def workflows(db_path, repos, auth):
     utils.ensure_db_shape(db)
 
 
+@cli.command()
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+def migrate(db_path):
+    """Create tables needed for embedding storage."""
+    db = sqlite_utils.Database(db_path)
+    utils.ensure_embedding_tables(db)
+    click.echo("Database migrated")
+
+
 def load_token(auth):
     try:
         token = json.load(open(auth))["github_personal_token"]

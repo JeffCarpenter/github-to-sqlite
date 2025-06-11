@@ -716,11 +716,105 @@ def ensure_foreign_keys(db):
             db[table].add_foreign_key(column, table2, column2)
 
 
+_SQLITE_VEC_LOADED = None
+
+
+def _maybe_load_sqlite_vec(db):
+    """Attempt to load sqlite-vec extension, returning True if available."""
+    global _SQLITE_VEC_LOADED
+    if _SQLITE_VEC_LOADED is not None:
+        return _SQLITE_VEC_LOADED
+    try:
+        import sqlite_vec
+        try:
+            sqlite_vec.load(db.conn)
+            _SQLITE_VEC_LOADED = True
+        except Exception:
+            _SQLITE_VEC_LOADED = False
+    except Exception:
+        _SQLITE_VEC_LOADED = False
+    return _SQLITE_VEC_LOADED
+
+
+def ensure_embedding_tables(db):
+    """Create tables used for embedding storage if they do not exist."""
+    using_vec = _maybe_load_sqlite_vec(db)
+
+    tables = set(db.table_names())
+
+    if "repo_embeddings" not in tables:
+        if using_vec:
+            db.execute(
+                """
+                create virtual table repo_embeddings using vec0(
+                    repo_id int primary key,
+                    title_embedding float[768],
+                    description_embedding float[768],
+                    readme_embedding float[768]
+                )
+                """
+            )
+        else:
+            db["repo_embeddings"].create(
+                {
+                    "repo_id": int,
+                    "title_embedding": bytes,
+                    "description_embedding": bytes,
+                    "readme_embedding": bytes,
+                },
+                pk="repo_id",
+                foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+            )
+
+    if "readme_chunk_embeddings" not in tables:
+        if using_vec:
+            db.execute(
+                """
+                create virtual table readme_chunk_embeddings using vec0(
+                    repo_id int,
+                    chunk_index int,
+                    chunk_text text,
+                    embedding float[768]
+                )
+                """
+            )
+            db.execute(
+                "create index if not exists readme_chunk_idx on readme_chunk_embeddings(repo_id, chunk_index)"
+            )
+        else:
+            db["readme_chunk_embeddings"].create(
+                {
+                    "repo_id": int,
+                    "chunk_index": int,
+                    "chunk_text": str,
+                    "embedding": bytes,
+                },
+                pk=("repo_id", "chunk_index"),
+                foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+            )
+
+    if "repo_build_files" not in tables:
+        db["repo_build_files"].create(
+            {"repo_id": int, "file_path": str, "metadata": str},
+            pk=("repo_id", "file_path"),
+            foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+        )
+
+    if "repo_metadata" not in tables:
+        db["repo_metadata"].create(
+            {"repo_id": int, "language": str, "directory_tree": str},
+            pk="repo_id",
+            foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+        )
+
+
 def ensure_db_shape(db):
     "Ensure FTS is configured and expected FKS, views and (soon) indexes are present"
     # Foreign keys:
     ensure_foreign_keys(db)
     db.index_foreign_keys()
+
+    ensure_embedding_tables(db)
 
     # FTS:
     existing_tables = set(db.table_names())
@@ -824,6 +918,26 @@ def rewrite_readme_html(html):
             ' href="#{}"'.format(href), ' href="#user-content-{}"'.format(href)
         )
     return html
+
+
+def chunk_readme(text):
+    """Return a list of textual chunks for the provided README content.
+
+    Attempts to use semantic_chunkers.StatisticalChunker if available; otherwise
+    falls back to splitting on blank lines. This allows tests to run without the
+    optional dependency installed.
+    """
+
+    try:
+        from semantic_chunkers.chunkers import StatisticalChunker
+
+        chunker = StatisticalChunker()
+        return list(chunker.chunk(text))
+    except Exception:
+        pass
+
+    # Fallback: split on blank lines
+    return [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
 
 
 def fetch_workflows(token, full_name):

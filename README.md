@@ -27,6 +27,7 @@ Save data from GitHub to a SQLite database.
 - [Scraping dependents for a repository](#scraping-dependents-for-a-repository)
 - [Fetching emojis](#fetching-emojis)
 - [Making authenticated API calls](#making-authenticated-api-calls)
+- [Running migrations](#running-migrations)
 
 <!-- tocstop -->
 
@@ -258,3 +259,12 @@ Many GitHub APIs are [paginated using the HTTP Link header](https://docs.github.
 You can outline newline-delimited JSON for each item using `--nl`. This can be useful for streaming items into another tool.
 
     $ github-to-sqlite get /users/simonw/repos --nl
+
+## Running migrations
+
+Run the `migrate` command to create tables used for embedding storage:
+
+    $ github-to-sqlite migrate github.db
+
+The command creates `repo_embeddings`, `readme_chunk_embeddings`,
+`repo_build_files`, and `repo_metadata` tables, using `sqlite-vec` if available.
