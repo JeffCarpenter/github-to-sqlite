@@ -7,7 +7,7 @@ import os
 import sqlite_utils
 import time
 import json
-from github_to_sqlite import utils
+from github_to_sqlite import utils, config
 
 
 @click.group()
@@ -635,6 +635,133 @@ def workflows(db_path, repos, auth):
         for filename, content in workflows.items():
             utils.save_workflow(db, repo_id, filename, content)
     utils.ensure_db_shape(db)
+
+
+@cli.command(name="starred-embeddings")
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.option("--model", help="Model to use for embeddings")
+@click.option("--force", is_flag=True, help="Overwrite existing embeddings")
+@click.option("--verbose", is_flag=True, help="Show progress information")
+@click.option(
+    "-a",
+    "--auth",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
+    default="auth.json",
+    help="Path to auth.json token file",
+)
+def starred_embeddings(db_path, model, force, verbose, auth):
+    """Generate embeddings for repositories starred by the user."""
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+
+    token = load_token(auth)
+    db = sqlite_utils.Database(db_path)
+    utils.ensure_db_shape(db)
+    using_vec = utils._maybe_load_sqlite_vec(db)
+    if verbose:
+        if using_vec:
+            click.echo("Using sqlite-vec for embedding storage")
+        else:
+            click.echo("sqlite-vec extension not loaded; storing embeddings as BLOBs")
+
+    env_model = os.environ.get("GITHUB_TO_SQLITE_MODEL")
+    model_name = model or env_model or config.config.default_model
+    embedder = SentenceTransformer(model_name)
+
+    for star in utils.fetch_all_starred(token=token):
+        repo = star["repo"]
+        repo_id = utils.save_repo(db, repo)
+
+        if not force and db["repo_embeddings"].count_where("repo_id = ?", [repo_id]):
+            if verbose:
+                click.echo(f"Skipping {repo['full_name']} (already processed)")
+            continue
+
+        title = repo.get("name") or ""
+        description = repo.get("description") or ""
+        readme = utils.fetch_readme(token, repo["full_name"]) or ""
+        chunks = utils.chunk_readme(readme)
+
+        texts = [title, description] + list(chunks)
+        vectors = embedder.encode(texts)
+        title_vec, desc_vec, *chunk_vecs = vectors
+
+        readme_vec = np.mean(chunk_vecs, axis=0) if chunk_vecs else np.zeros_like(title_vec)
+
+        if using_vec:
+            import sqlite_vec
+            title_val = sqlite_vec.serialize_float32(list(title_vec))
+            desc_val = sqlite_vec.serialize_float32(list(desc_vec))
+            readme_val = sqlite_vec.serialize_float32(list(readme_vec))
+        else:
+            title_val = utils.vector_to_blob(title_vec)
+            desc_val = utils.vector_to_blob(desc_vec)
+            readme_val = utils.vector_to_blob(readme_vec)
+
+        db["repo_embeddings"].upsert(
+            {
+                "repo_id": repo_id,
+                "title_embedding": title_val,
+                "description_embedding": desc_val,
+                "readme_embedding": readme_val,
+            },
+            pk="repo_id",
+        )
+
+        for i, (chunk, vec) in enumerate(zip(chunks, chunk_vecs)):
+            chunk_val = (
+                sqlite_vec.serialize_float32(list(vec)) if using_vec else utils.vector_to_blob(vec)
+            )
+            db["readme_chunk_embeddings"].upsert(
+                {
+                    "repo_id": repo_id,
+                    "chunk_index": i,
+                    "chunk_text": chunk,
+                    "embedding": chunk_val,
+                },
+                pk=("repo_id", "chunk_index"),
+            )
+
+        # Build file metadata
+        for build_path in utils.find_build_files(repo["full_name"]):
+            metadata = utils.parse_build_file(os.path.join(repo["full_name"], build_path))
+            db["repo_build_files"].upsert(
+                {
+                    "repo_id": repo_id,
+                    "file_path": build_path,
+                    "metadata": json.dumps(metadata),
+                },
+                pk=("repo_id", "file_path"),
+            )
+
+        db["repo_metadata"].upsert(
+            {
+                "repo_id": repo_id,
+                "language": repo.get("language") or "",
+                "directory_tree": json.dumps(utils.directory_tree(repo["full_name"])),
+            },
+            pk="repo_id",
+        )
+
+        if verbose:
+            click.echo(f"Processed {repo['full_name']}")
+
+
+@cli.command()
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+def migrate(db_path):
+    """Ensure all optional tables, FTS and foreign keys exist."""
+    db = sqlite_utils.Database(db_path)
+    utils.ensure_db_shape(db)
+    click.echo("Database migrated")
 
 
 def load_token(auth):
