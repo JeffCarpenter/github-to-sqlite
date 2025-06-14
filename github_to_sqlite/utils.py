@@ -1,10 +1,16 @@
 import base64
 import sys
+import os
+import subprocess
+import shutil
 import requests
 import re
 import time
 import urllib.parse
 import yaml
+import sqlite_utils
+import pathlib
+from typing import Optional, cast
 
 
 from urllib3 import Retry
@@ -432,7 +438,8 @@ def fetch_tags(repo, token=None):
 
 def fetch_commits(repo, token=None, stop_when=None):
     if stop_when is None:
-        stop_when = lambda commit: False
+        def stop_when(commit):
+            return False
     headers = make_headers(token)
     url = "https://api.github.com/repos/{}/commits".format(repo)
     try:
@@ -506,7 +513,7 @@ def paginate(url, headers=None):
         if isinstance(data, dict) and data.get("message"):
             print(GitHubError.from_response(response), file=sys.stderr)
         try:
-            url = response.links.get("next").get("url") if response.status_code == 200 else url
+            url = response.links.get("next", {}).get("url") if response.status_code == 200 else url
         except AttributeError:
             url = None
         yield data
@@ -716,11 +723,129 @@ def ensure_foreign_keys(db):
             db[table].add_foreign_key(column, table2, column2)
 
 
+_SQLITE_VEC_LOADED: bool | None = None
+
+
+def _create_table_if_missing(
+    db: sqlite_utils.Database,
+    tables: set[str],
+    name: str,
+    columns: dict[str, type],
+    pk: str | tuple[str, ...],
+    foreign_keys: list[tuple[str, str, str]] | None = None,
+) -> None:
+    """Create *name* if it doesn't exist in *tables*."""
+    if name not in tables:
+        table = cast(sqlite_utils.db.Table, db[name])
+        table.create(columns, pk=pk, foreign_keys=foreign_keys or [])
+
+
+def _maybe_load_sqlite_vec(db):
+    """Attempt to load sqlite-vec extension, returning True if available."""
+    global _SQLITE_VEC_LOADED
+    if _SQLITE_VEC_LOADED is not None:
+        return _SQLITE_VEC_LOADED
+    try:
+        import sqlite_vec
+        try:
+            sqlite_vec.load(db.conn)
+            _SQLITE_VEC_LOADED = True
+        except Exception:
+            _SQLITE_VEC_LOADED = False
+    except Exception:
+        _SQLITE_VEC_LOADED = False
+    return _SQLITE_VEC_LOADED
+
+
+def ensure_embedding_tables(db):
+    """Create tables used for embedding storage if they do not exist."""
+    using_vec = _maybe_load_sqlite_vec(db)
+
+    tables = set(db.table_names())
+
+    if "repo_embeddings" not in tables:
+        if using_vec:
+            db.execute(
+                """
+                create virtual table repo_embeddings using vec0(
+                    repo_id int primary key,
+                    title_embedding float[768],
+                    description_embedding float[768],
+                    readme_embedding float[768]
+                )
+                """
+            )
+        else:
+            _create_table_if_missing(
+                db,
+                tables,
+                "repo_embeddings",
+                {
+                    "repo_id": int,
+                    "title_embedding": bytes,
+                    "description_embedding": bytes,
+                    "readme_embedding": bytes,
+                },
+                pk="repo_id",
+                foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+            )
+
+    if "readme_chunk_embeddings" not in tables:
+        if using_vec:
+            db.execute(
+                """
+                create virtual table readme_chunk_embeddings using vec0(
+                    repo_id int,
+                    chunk_index int,
+                    chunk_text text,
+                    embedding float[768]
+                )
+                """
+            )
+            db.execute(
+                "create index if not exists readme_chunk_idx on readme_chunk_embeddings(repo_id, chunk_index)"
+            )
+        else:
+            _create_table_if_missing(
+                db,
+                tables,
+                "readme_chunk_embeddings",
+                {
+                    "repo_id": int,
+                    "chunk_index": int,
+                    "chunk_text": str,
+                    "embedding": bytes,
+                },
+                pk=("repo_id", "chunk_index"),
+                foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+            )
+
+    _create_table_if_missing(
+        db,
+        tables,
+        "repo_build_files",
+        {"repo_id": int, "file_path": str, "metadata": str},
+        pk=("repo_id", "file_path"),
+        foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+    )
+
+    _create_table_if_missing(
+        db,
+        tables,
+        "repo_metadata",
+        {"repo_id": int, "language": str, "directory_tree": str},
+        pk="repo_id",
+        foreign_keys=[("repo_id", "repos", "id")] if "repos" in tables else [],
+    )
+
+
 def ensure_db_shape(db):
     "Ensure FTS is configured and expected FKS, views and (soon) indexes are present"
     # Foreign keys:
     ensure_foreign_keys(db)
     db.index_foreign_keys()
+
+    ensure_embedding_tables(db)
 
     # FTS:
     existing_tables = set(db.table_names())
@@ -732,7 +857,6 @@ def ensure_db_shape(db):
         db[table].enable_fts(columns, create_triggers=True)
 
     # Views:
-    existing_views = set(db.view_names())
     existing_tables = set(db.table_names())
     for view, (tables, sql) in VIEWS.items():
         # Do all of the tables exist?
@@ -745,14 +869,14 @@ def scrape_dependents(repo, verbose=False):
     # Optional dependency:
     from bs4 import BeautifulSoup
 
-    url = "https://github.com/{}/network/dependents".format(repo)
+    url: str | None = "https://github.com/{}/network/dependents".format(repo)
     while url:
         if verbose:
             print(url)
         response = requests.get(url)
         soup = BeautifulSoup(response.content, "html.parser")
         repos = [
-            a["href"].lstrip("/")
+            str(a["href"]).lstrip("/")
             for a in soup.select("a[data-hovercard-type=repository]")
         ]
         if verbose:
@@ -764,7 +888,10 @@ def scrape_dependents(repo, verbose=False):
         except IndexError:
             break
         if next_link is not None:
-            url = next_link["href"]
+            from bs4.element import Tag
+
+            tag = cast(Tag, next_link)
+            url = cast(Optional[str], tag.get("href"))
             time.sleep(1)
         else:
             url = None
@@ -824,6 +951,26 @@ def rewrite_readme_html(html):
             ' href="#{}"'.format(href), ' href="#user-content-{}"'.format(href)
         )
     return html
+
+
+def chunk_readme(text):
+    """Return a list of textual chunks for the provided README content.
+
+    Attempts to use semantic_chunkers.StatisticalChunker if available; otherwise
+    falls back to splitting on blank lines. This allows tests to run without the
+    optional dependency installed.
+    """
+
+    try:
+        from semantic_chunkers.chunkers import StatisticalChunker
+
+        chunker = StatisticalChunker()
+        return list(chunker.chunk(text))
+    except Exception:
+        pass
+
+    # Fallback: split on blank lines
+    return [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
 
 
 def fetch_workflows(token, full_name):
@@ -912,3 +1059,96 @@ def save_workflow(db, repo_id, filename, content):
             pk="id",
             foreign_keys=["job", "repo"],
         )
+
+# Utility to locate build definition files using fd, find or os.walk
+
+
+BUILD_PATTERNS = ["pyproject.toml", "package.json", "Cargo.toml", "Gemfile"]
+
+def find_build_files(path: str) -> list[str]:
+    """Return a list of build definition files under *path*.
+
+    The helper prefers the ``fd`` command if available, then falls back to
+    ``find`` and finally to walking the directory tree with ``os.walk``. Paths
+    are returned relative to *path*.
+    """
+    found: list[str] = []
+
+    if shutil.which("fd"):
+        for pattern in BUILD_PATTERNS:
+            try:
+                result = subprocess.run(
+                    ["fd", "-HI", "-t", "f", pattern, path],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                continue
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line:
+                    found.append(os.path.normpath(line))
+    elif shutil.which("find"):
+        for pattern in BUILD_PATTERNS:
+            try:
+                result = subprocess.run(
+                    ["find", path, "-name", pattern, "-type", "f"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                continue
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line:
+                    found.append(os.path.relpath(os.path.normpath(line), path))
+    else:
+        for pattern in BUILD_PATTERNS:
+            for full in pathlib.Path(path).rglob(pattern):
+                if full.is_file():
+                    found.append(
+                        os.path.relpath(os.path.normpath(str(full)), path)
+                    )
+    # Remove duplicates while preserving order
+    unique: list[str] = []
+    seen = set()
+    for f in found:
+        if f not in seen:
+            unique.append(f)
+            seen.add(f)
+    return unique
+
+
+def vector_to_blob(vec) -> bytes:
+    """Return a float32 byte string for the provided vector."""
+    import numpy as np
+
+    arr = np.asarray(vec, dtype="float32")
+    return arr.tobytes()
+
+
+def parse_build_file(path: str) -> dict:
+    """Parse a supported build file and return its contents as a dict."""
+    import json
+    import tomllib
+
+    try:
+        if path.endswith(".json"):
+            with open(path) as fp:
+                return json.load(fp)
+        with open(path, "rb") as fp:
+            return tomllib.load(fp)
+    except Exception:
+        return {}
+
+
+def directory_tree(path: str) -> dict:
+    """Return a simple directory tree representation for *path*."""
+    tree = {}
+    for root, dirs, files in os.walk(path):
+        rel = os.path.relpath(root, path)
+        tree[rel] = {"dirs": sorted(dirs), "files": sorted(files)}
+    return tree
+
