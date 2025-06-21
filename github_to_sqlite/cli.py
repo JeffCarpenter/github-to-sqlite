@@ -4,9 +4,11 @@ import itertools
 import pathlib
 import textwrap
 import os
+import importlib.util
 import sqlite_utils
 import time
 import json
+from typing import Any, Optional, cast
 from github_to_sqlite import utils
 
 
@@ -140,10 +142,12 @@ def pull_requests(db_path, repo, pull_request_ids, auth, load, orgs, state, sear
                 repos_seen.add(pr_repo_url)
             utils.save_pull_requests(db, [pull_request], pr_repo)
     else:
+        from typing import Iterable, Any
+
+        repos: Iterable[dict[str, Any]]
         if orgs:
             repos = itertools.chain.from_iterable(
-                utils.fetch_all_repos(token=token, org=org)
-                for org in orgs
+                utils.fetch_all_repos(token=token, org=org) for org in orgs
             )
         else:
             repos = [utils.fetch_repo(repo, token)]
@@ -306,10 +310,12 @@ def repos(db_path, usernames, auth, repo, load, readme, readme_html):
 def _repo_readme(db, token, repo_id, full_name, readme, readme_html):
     if readme:
         readme = utils.fetch_readme(token, full_name)
-        db["repos"].update(repo_id, {"readme": readme}, alter=True)
+        cast(sqlite_utils.db.Table, db["repos"]).update(repo_id, {"readme": readme}, alter=True)
     if readme_html:
         readme_html = utils.fetch_readme(token, full_name, html=True)
-        db["repos"].update(repo_id, {"readme_html": readme_html}, alter=True)
+        cast(sqlite_utils.db.Table, db["repos"]).update(
+            repo_id, {"readme_html": readme_html}, alter=True
+        )
 
 
 @cli.command()
@@ -424,21 +430,24 @@ def commits(db_path, repos, all, auth):
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
 
-    def stop_when(commit):
+    from typing import Callable
+
+    def stop_when(commit: Any) -> bool:
         try:
-            db["commits"].get(commit["sha"])
+            cast(sqlite_utils.db.Table, db["commits"]).get(commit["sha"])
             return True
         except sqlite_utils.db.NotFoundError:
             return False
 
+    stop_when_func: Optional[Callable[[Any], bool]] = stop_when
     if all:
-        stop_when = None
+        stop_when_func = None
 
     for repo in repos:
         repo_full = utils.fetch_repo(repo, token)
         utils.save_repo(db, repo_full)
 
-        commits = utils.fetch_commits(repo, token, stop_when)
+        commits = utils.fetch_commits(repo, token, stop_when_func)
         utils.save_commits(db, commits, repo_full["id"])
         time.sleep(1)
 
@@ -467,9 +476,7 @@ def commits(db_path, repos, all, auth):
 )
 def scrape_dependents(db_path, repos, auth, verbose):
     "Scrape dependents for specified repos"
-    try:
-        import bs4
-    except ImportError:
+    if importlib.util.find_spec("bs4") is None:
         raise click.ClickException("Optional dependency bs4 is needed for this command")
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
@@ -480,7 +487,7 @@ def scrape_dependents(db_path, repos, auth, verbose):
 
         for dependent_repo in utils.scrape_dependents(repo, verbose):
             # Don't fetch repo details if it's already in our DB
-            existing = list(db["repos"].rows_where("full_name = ?", [dependent_repo]))
+            existing = list(cast(sqlite_utils.db.Table, db["repos"]).rows_where("full_name = ?", [dependent_repo]))
             dependent_id = None
             if not existing:
                 dependent_full = utils.fetch_repo(dependent_repo, token)
@@ -490,12 +497,13 @@ def scrape_dependents(db_path, repos, auth, verbose):
             else:
                 dependent_id = existing[0]["id"]
             # Only insert if it isn't already there:
-            if not db["dependents"].exists() or not list(
-                db["dependents"].rows_where(
+            dependents_table = cast(sqlite_utils.db.Table, db["dependents"])
+            if not dependents_table.exists() or not list(
+                dependents_table.rows_where(
                     "repo = ? and dependent = ?", [repo_full["id"], dependent_id]
                 )
             ):
-                db["dependents"].insert(
+                dependents_table.insert(
                     {
                         "repo": repo_full["id"],
                         "dependent": dependent_id,
@@ -534,7 +542,7 @@ def emojis(db_path, auth, fetch):
     "Fetch GitHub supported emojis"
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
-    table = db.table("emojis", pk="name")
+    table = cast(sqlite_utils.db.Table, db.table("emojis", pk="name"))
     table.upsert_all(utils.fetch_emojis(token))
     if fetch:
         # Ensure table has 'image' column
@@ -635,6 +643,48 @@ def workflows(db_path, repos, auth):
         for filename, content in workflows.items():
             utils.save_workflow(db, repo_id, filename, content)
     utils.ensure_db_shape(db)
+
+
+@cli.command(name="starred-embeddings")
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.option("--model", help="Model to use for embeddings")
+@click.option("--force", is_flag=True, help="Overwrite existing embeddings")
+@click.option("--verbose", is_flag=True, help="Show progress information")
+@click.option(
+    "-a",
+    "--auth",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
+    default="auth.json",
+    help="Path to auth.json token file",
+)
+def starred_embeddings(db_path, model, force, verbose, auth):
+    """Generate embeddings for repositories starred by the user."""
+    token = load_token(auth)
+    db = sqlite_utils.Database(db_path)
+    utils.generate_starred_embeddings(
+        db,
+        token,
+        model_name=model,
+        force=force,
+        verbose=verbose,
+    )
+
+
+@cli.command()
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+def migrate(db_path):
+    """Ensure all optional tables, FTS and foreign keys exist."""
+    db = sqlite_utils.Database(db_path)
+    utils.ensure_db_shape(db)
+    click.echo("Database migrated")
 
 
 def load_token(auth):
