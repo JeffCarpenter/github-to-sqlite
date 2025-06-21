@@ -12,7 +12,10 @@ def test_vector_to_blob_round_trip():
     vec = np.array([1.0, 2.0, 3.5], dtype="float32")
     blob = utils.vector_to_blob(vec)
     assert isinstance(blob, bytes)
+    # Byte length should match the float32 representation
+    assert len(blob) == vec.astype("float32").nbytes
     arr = np.frombuffer(blob, dtype="float32")
+    assert arr.dtype == np.float32
     assert arr.tolist() == [1.0, 2.0, 3.5]
 
 
@@ -29,13 +32,19 @@ def test_parse_build_file_json_and_toml(tmp_path):
 
 
 def test_directory_tree(tmp_path):
-    sub = tmp_path / "sub"
-    sub.mkdir()
-    (sub / "file.txt").write_text("data")
+    b = tmp_path / "b"
+    a = tmp_path / "a"
+    b.mkdir()
+    a.mkdir()
+    (a / "2.txt").write_text("data")
+    (a / "1.txt").write_text("data")
 
     tree = utils.directory_tree(str(tmp_path))
-    assert tree["."] == {"dirs": ["sub"], "files": []}
-    assert tree["sub"] == {"dirs": [], "files": ["file.txt"]}
+    # Root should list directories sorted alphabetically
+    assert tree["."]["dirs"] == ["a", "b"]
+    assert tree["."]["files"] == []
+    # Files should also be sorted
+    assert tree["a"]["files"] == ["1.txt", "2.txt"]
 
 
 def test_maybe_load_sqlite_vec(monkeypatch):
