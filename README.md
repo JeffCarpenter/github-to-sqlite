@@ -27,6 +27,8 @@ Save data from GitHub to a SQLite database.
 - [Scraping dependents for a repository](#scraping-dependents-for-a-repository)
 - [Fetching emojis](#fetching-emojis)
 - [Making authenticated API calls](#making-authenticated-api-calls)
+- [Running migrations](#running-migrations)
+- [Generating embeddings for starred repositories](#generating-embeddings-for-starred-repositories)
 
 <!-- tocstop -->
 
@@ -258,3 +260,38 @@ Many GitHub APIs are [paginated using the HTTP Link header](https://docs.github.
 You can outline newline-delimited JSON for each item using `--nl`. This can be useful for streaming items into another tool.
 
     $ github-to-sqlite get /users/simonw/repos --nl
+
+## Running migrations
+
+Run the `migrate` command to create any optional tables and indexes:
+
+    $ github-to-sqlite migrate github.db
+
+The command ensures embedding tables exist and sets up FTS, foreign keys and
+views using the same logic as the main CLI commands. It will create
+`repo_embeddings`, `readme_chunk_embeddings`, `repo_build_files`, and
+`repo_metadata` tables, using `sqlite-vec` if available.
+
+## Build file detection
+
+Some commands extract metadata from standard build files. The helper prefers the
+[`fd`](https://github.com/sharkdp/fd) tool if available, falling back to the
+`find` utility or a Python implementation.
+
+## Generating embeddings for starred repositories
+
+Use the `starred-embeddings` command to compute embeddings for repositories you
+have starred. The command loads the sentence-transformers model configured in
+`config.default_model` (currently `Alibaba-NLP/gte-modernbert-base`) unless you
+specify `--model`. You can also set the `GITHUB_TO_SQLITE_MODEL` environment
+variable to override the default.
+
+```
+$ github-to-sqlite starred-embeddings github.db --model my/custom-model
+```
+
+Embeddings for repository titles, descriptions and README chunks are stored in
+`repo_embeddings` and `readme_chunk_embeddings`. Build files discovered using
+`find_build_files()` are parsed and saved to `repo_build_files`, while basic
+language information and a directory listing are recorded in `repo_metadata`.
+
