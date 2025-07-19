@@ -18,7 +18,17 @@ jobs:
         cache-dependency-path: setup.py
     - name: Install dependencies
       run: |
-        pip install -e '.[test]'
+        pip install -e '.[test,docs]'
+        pip install mypy ruff
     - name: Run tests
       run: |
-        pytest
+        pytest --cov=github_to_sqlite --cov-branch -q
+    - name: Run ruff
+      run: |
+        ruff check . --format=github --exit-zero
+    - name: Run mypy
+      run: |
+        mypy github_to_sqlite --no-error-summary
+    - name: Build docs
+      run: |
+        sphinx-build -b html docs docs/_build -W
