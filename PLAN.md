@@ -1,45 +1,11 @@
 # Embeddings feature plan
 
-This document decomposes the work required to generate sentence-transformer embeddings for starred repositories. The work is split into three phases so that core functionality lands first, then documentation tooling, followed by publishing the new docs.
+This document tracks the remaining work needed to generate sentence-transformer embeddings for starred repositories.
 
 ## Phase 1: Generate and store embeddings
 
-This phase introduces embeddings for starred repositories. The following
-checkboxes track progress for each task.
-
 ### Dependencies
-- [x] **Add runtime dependencies**
-  - [x] Install `sentence-transformers` for embedding inference.
-  - [x] Install `sqlite-vec` to store and query embedding vectors in SQLite.
-  - [x] Install `semantic-chunkers` from GitHub to chunk README text using
-    `semantic_chunkers.chunkers.StatisticalChunker`.
-  - [ ] Install `fd` to locate build definition files across the repository tree.
-- [x] **Add development dependencies**
-  - [x] Include `pytest-cov` for coverage reports.
-  - [x] Update `setup.py` or `pyproject.toml` accordingly.
-
-### Database changes
-- [x] **Create `repo_embeddings` table**
-  - [x] Columns: `repo_id` (FK to `repos`), `title_embedding`, `description_embedding`, `readme_embedding`.
-  - [x] Store embeddings using `sqlite-vec` vec0 virtual tables for efficient vector search.
-  - [x] Add indexes on `repo_id` for fast lookup.
-- [x] **Create `readme_chunk_embeddings` table**
-  - [x] Columns: `repo_id` (FK to `repos`), `chunk_index`, `chunk_text`, `embedding`.
-  - [x] Use `sqlite-vec` for the `embedding` column to enable similarity search over
-    individual README chunks.
-  - [x] Add a composite index on `repo_id` and `chunk_index`.
-- [x] **Create `repo_build_files` table**
-  - [x] Columns: `repo_id` (FK to `repos`), `file_path`, `metadata` (JSON).
-  - [x] Store one row per build definition (e.g. `pyproject.toml`, `package.json`).
-  - [x] The `metadata` column captures the entire parsed contents of the file so that
-    fields such as package name or author can be queried later.
-- [x] **Create `repo_metadata` table**
-  - [x] Columns: `repo_id` (FK to `repos`), `language`, `directory_tree`.
-  - [x] Capture the primary programming language and a serialized directory structure
-    for quick reference.
- - [x] **Migration script**
-  - [x] Provide SQL script or CLI command that creates the table if it does not exist.
-  - [x] Document migration process in README.
+- [ ] Install `fd` to locate build definition files across the repository tree.
 
 ### Embedding generation
 - [ ] **Model loading**
@@ -51,16 +17,13 @@ checkboxes track progress for each task.
   - [ ] Use `fd` to locate common build files (`pyproject.toml`, `package.json`,
     `Cargo.toml`, `Gemfile`).
   - [ ] Parse each file and store its entire contents as JSON in the
-    `repo_build_files.metadata` column. Package name and author can then be
-    derived from this JSON as needed.
-  - [ ] Record the repository's primary programming language and generate a serialized
-    directory tree for storage in `repo_metadata`.
+    `repo_build_files.metadata` column.
+  - [ ] Record the repository's primary programming language and generate a
+    serialized directory tree for storage in `repo_metadata`.
 - [ ] **Chunking**
   - [ ] Use `semantic_chunkers.chunkers.StatisticalChunker` to split README text
-    into semantically meaningful chunks. See `docs/00-chunkers-intro.ipynb` in
-    the `semantic-chunkers` repository for usage examples.
-  - [ ] If that library is not available at runtime, fall back to splitting on
-    blank lines to ensure tests run without optional dependencies.
+    into semantically meaningful chunks. If that library is unavailable at
+    runtime, fall back to splitting on blank lines.
 - [ ] **Vector inference**
   - [ ] Run the model on the repository title, description and each README chunk.
   - [ ] Batch requests when possible to speed up inference.
@@ -75,8 +38,8 @@ checkboxes track progress for each task.
   - [ ] Accept database path and optional model path.
   - [ ] Iterate through all starred repos and compute embeddings.
   - [ ] Chunk each README using `StatisticalChunker` and store chunk embeddings.
-  - [ ] Collect build metadata using `fd` and store the entire parsed JSON in the
-    `repo_build_files.metadata` column.
+  - [ ] Collect build metadata using `fd` and store the parsed JSON in
+    `repo_build_files.metadata`.
   - [ ] Support `--force` and `--verbose` flags.
 - [ ] **Error handling**
   - [ ] Handle missing READMEs gracefully.
@@ -88,7 +51,7 @@ checkboxes track progress for each task.
   - [ ] Verify embeddings are generated and stored correctly, including per-chunk
     embeddings.
   - [ ] Ensure build metadata is parsed and stored as JSON in `repo_build_files`.
-  - [ ] **Coverage**
+- [ ] **Coverage**
   - [ ] Run `pytest --cov` in CI to ensure coverage does not regress.
 
 ### Documentation
@@ -102,28 +65,15 @@ checkboxes track progress for each task.
   - [ ] Summarize the feature and dependencies.
 
 ## Phase 2: Documentation tooling
-
-- [ ] **Introduce RST and Sphinx**
-  - [ ] Add `sphinx` and `sphinx-rtd-theme` to development dependencies.
-  - [ ] Configure a `docs/` directory with Sphinx `conf.py` and initial structure.
-- [ ] **Convert existing documentation**
-  - [ ] Migrate `README.md` or relevant guides into RST as needed.
-  - [ ] Ensure the embeddings feature is documented in the new docs site.
-- [ ] **Automation**
-  - [ ] Update CI to build documentation and fail on warnings.
+- [ ] Introduce RST and Sphinx for publishing a docs site.
+- [ ] Convert existing documentation into RST.
+- [ ] Update CI to build docs and fail on warnings.
 
 ## Phase 3: Publish documentation
-
-- [ ] **Deployment**
-  - [ ] Publish the documentation using GitHub Pages or another hosting service.
-  - [ ] Automate deployment on release so new docs are available immediately.
+- [ ] Deploy the docs using GitHub Pages or another hosting service.
+- [ ] Automate deployment on release so new docs are available immediately.
 
 ## Next task: implement `starred-embeddings` CLI
-
-The immediate focus is to build the command that generates embeddings for the
-user's starred repositories. This high level task expands into the following
-steps:
-
 - [ ] Add a `starred-embeddings` Click command in `cli.py`.
   - [ ] Accept a database path argument.
   - [ ] Accept `--model` to override the default model.
@@ -139,4 +89,3 @@ steps:
   - [ ] Capture the primary language and directory tree in `repo_metadata`.
 - [ ] Write unit tests for the new command using mocks to avoid network calls.
 - [ ] Ensure coverage passes with `pytest --cov`.
-

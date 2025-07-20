@@ -1,12 +1,12 @@
-from typing import Iterable, List, Sequence, Union
+from typing import List, Sequence, Union
 
 import numpy as np
 
-try:
+try:  # pragma: no cover - torch may not be installed
     import torch
-    TensorType = (np.ndarray, torch.Tensor)
+    TensorType = Union[np.ndarray, "torch.Tensor"]
 except Exception:  # pragma: no cover - torch not installed
-    TensorType = (np.ndarray,)
+    TensorType = np.ndarray
 
 
 class BasicSentencizerChunker:
