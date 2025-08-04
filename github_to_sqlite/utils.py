@@ -1,14 +1,28 @@
 import base64
 import sys
+import os
 import requests
 import re
 import time
 import urllib.parse
 import yaml
+import sqlite_utils
+import json
+from typing import Optional, cast, Iterable
 
-
+from . import config
+from .embedding_utils import _maybe_load_sqlite_vec, ensure_embedding_tables
+from .build_files import (
+    find_build_files,
+    _post_process_build_files,
+    parse_build_file,
+    directory_tree,
+    vector_to_blob,
+)
 from urllib3 import Retry
 from requests.adapters import HTTPAdapter
+
+EMBEDDING_DIM = config.config.embedding_dim
 
 
 FTS_CONFIG = {
@@ -432,7 +446,8 @@ def fetch_tags(repo, token=None):
 
 def fetch_commits(repo, token=None, stop_when=None):
     if stop_when is None:
-        stop_when = lambda commit: False
+        def stop_when(commit):
+            return False
     headers = make_headers(token)
     url = "https://api.github.com/repos/{}/commits".format(repo)
     try:
@@ -506,7 +521,7 @@ def paginate(url, headers=None):
         if isinstance(data, dict) and data.get("message"):
             print(GitHubError.from_response(response), file=sys.stderr)
         try:
-            url = response.links.get("next").get("url") if response.status_code == 200 else url
+            url = response.links.get("next", {}).get("url") if response.status_code == 200 else url
         except AttributeError:
             url = None
         yield data
@@ -716,11 +731,15 @@ def ensure_foreign_keys(db):
             db[table].add_foreign_key(column, table2, column2)
 
 
+
+
 def ensure_db_shape(db):
     "Ensure FTS is configured and expected FKS, views and (soon) indexes are present"
     # Foreign keys:
     ensure_foreign_keys(db)
     db.index_foreign_keys()
+
+    ensure_embedding_tables(db)
 
     # FTS:
     existing_tables = set(db.table_names())
@@ -732,7 +751,6 @@ def ensure_db_shape(db):
         db[table].enable_fts(columns, create_triggers=True)
 
     # Views:
-    existing_views = set(db.view_names())
     existing_tables = set(db.table_names())
     for view, (tables, sql) in VIEWS.items():
         # Do all of the tables exist?
@@ -745,14 +763,14 @@ def scrape_dependents(repo, verbose=False):
     # Optional dependency:
     from bs4 import BeautifulSoup
 
-    url = "https://github.com/{}/network/dependents".format(repo)
+    url: str | None = "https://github.com/{}/network/dependents".format(repo)
     while url:
         if verbose:
             print(url)
         response = requests.get(url)
         soup = BeautifulSoup(response.content, "html.parser")
         repos = [
-            a["href"].lstrip("/")
+            str(a["href"]).lstrip("/")
             for a in soup.select("a[data-hovercard-type=repository]")
         ]
         if verbose:
@@ -764,7 +782,10 @@ def scrape_dependents(repo, verbose=False):
         except IndexError:
             break
         if next_link is not None:
-            url = next_link["href"]
+            from bs4.element import Tag
+
+            tag = cast(Tag, next_link)
+            url = cast(Optional[str], tag.get("href"))
             time.sleep(1)
         else:
             url = None
@@ -824,6 +845,26 @@ def rewrite_readme_html(html):
             ' href="#{}"'.format(href), ' href="#user-content-{}"'.format(href)
         )
     return html
+
+
+def chunk_readme(text):
+    """Return a list of textual chunks for the provided README content.
+
+    Attempts to use ``semantic_chunkers.StatisticalChunker`` if available;
+    otherwise falls back to splitting on blank lines. This allows tests to run
+    without the optional dependency installed.
+    """
+
+    try:
+        from semantic_chunkers.chunkers import StatisticalChunker
+    except ImportError:
+        pass
+    else:
+        chunker = StatisticalChunker()
+        return list(chunker.chunk(text))
+
+    # Fallback: split on blank lines
+    return [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
 
 
 def fetch_workflows(token, full_name):
@@ -912,3 +953,123 @@ def save_workflow(db, repo_id, filename, content):
             pk="id",
             foreign_keys=["job", "repo"],
         )
+
+
+def generate_starred_embeddings(
+    db: sqlite_utils.Database,
+    token: str,
+    model_name: str | None = None,
+    *,
+    force: bool = False,
+    verbose: bool = False,
+    patterns: Iterable[str] | None = None,
+) -> None:
+    """Generate embeddings for repos starred by the authenticated user.
+
+    Parameters:
+        db: Database instance to save embeddings into.
+        token: GitHub authentication token.
+        model_name: Optional model override.
+        force: Overwrite existing rows if ``True``.
+        verbose: Print progress information.
+        patterns: Optional custom patterns passed to ``find_build_files``.
+    """
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+
+    ensure_db_shape(db)
+    using_vec = _maybe_load_sqlite_vec(db)
+    if verbose:
+        if using_vec:
+            print("Using sqlite-vec for embedding storage")
+        else:
+            print("sqlite-vec extension not loaded; storing embeddings as BLOBs")
+
+    env_model = os.environ.get("GITHUB_TO_SQLITE_MODEL")
+    model_name = model_name or env_model or config.config.default_model
+    embedder = SentenceTransformer(model_name)
+
+    batch_size = 32
+    for star in fetch_all_starred(token=token):
+        repo = star["repo"]
+        repo_id = save_repo(db, repo)
+
+        repo_embeddings = cast(sqlite_utils.db.Table, db["repo_embeddings"])
+        if not force and repo_embeddings.count_where("repo_id = ?", [repo_id]):
+            if verbose:
+                print(f"Skipping {repo['full_name']} (already processed)")
+            continue
+
+        title = repo.get("name") or ""
+        description = repo.get("description") or ""
+        readme = fetch_readme(token, repo["full_name"]) or ""
+        chunks = chunk_readme(readme)
+
+        title_vec, desc_vec = embedder.encode([title, description])
+        chunk_vecs = []
+        for i in range(0, len(chunks), batch_size):
+            part = chunks[i : i + batch_size]
+            chunk_vecs.extend(embedder.encode(list(part)))
+
+        readme_vec = np.mean(chunk_vecs, axis=0) if chunk_vecs else np.zeros_like(
+            title_vec
+        )
+
+        if using_vec:
+            import sqlite_vec
+
+            title_val = sqlite_vec.serialize_float32(list(title_vec))
+            desc_val = sqlite_vec.serialize_float32(list(desc_vec))
+            readme_val = sqlite_vec.serialize_float32(list(readme_vec))
+        else:
+            title_val = vector_to_blob(title_vec)
+            desc_val = vector_to_blob(desc_vec)
+            readme_val = vector_to_blob(readme_vec)
+
+        repo_embeddings.upsert(
+            {
+                "repo_id": repo_id,
+                "title_embedding": title_val,
+                "description_embedding": desc_val,
+                "readme_embedding": readme_val,
+            },
+            pk="repo_id",
+        )
+
+        for i, (chunk, vec) in enumerate(zip(chunks, chunk_vecs)):
+            chunk_val = (
+                sqlite_vec.serialize_float32(list(vec)) if using_vec else vector_to_blob(vec)
+            )
+            cast(sqlite_utils.db.Table, db["readme_chunk_embeddings"]).upsert(
+                {
+                    "repo_id": repo_id,
+                    "chunk_index": i,
+                    "chunk_text": chunk,
+                    "embedding": chunk_val,
+                },
+                pk=("repo_id", "chunk_index"),
+            )
+
+        for build_path in find_build_files(repo["full_name"], patterns=patterns):
+            metadata = parse_build_file(os.path.join(repo["full_name"], build_path))
+            cast(sqlite_utils.db.Table, db["repo_build_files"]).upsert(
+                {
+                    "repo_id": repo_id,
+                    "file_path": build_path,
+                    "metadata": json.dumps(metadata),
+                },
+                pk=("repo_id", "file_path"),
+            )
+
+        cast(sqlite_utils.db.Table, db["repo_metadata"]).upsert(
+            {
+                "repo_id": repo_id,
+                "language": repo.get("language") or "",
+                "directory_tree": json.dumps(directory_tree(repo["full_name"])),
+            },
+            pk="repo_id",
+        )
+
+        if verbose:
+            print(f"Processed {repo['full_name']}")
+

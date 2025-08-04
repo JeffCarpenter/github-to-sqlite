@@ -2,11 +2,9 @@ import base64
 import pytest
 import pathlib
 import sqlite_utils
-from sqlite_utils.db import ForeignKey
 import json
 from click.testing import CliRunner
 from github_to_sqlite import cli
-import pytest
 
 README_HTML = """
 <li><a href="#filtering-tables">Filtering tables</a></li>
@@ -45,6 +43,10 @@ def test_repos(mocked, tmpdir):
         "users",
         "licenses",
         "repos",
+        "repo_embeddings",
+        "readme_chunk_embeddings",
+        "repo_build_files",
+        "repo_metadata",
         "licenses_fts",
         "licenses_fts_data",
         "licenses_fts_idx",
