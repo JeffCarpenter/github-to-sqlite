@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, List, Optional, cast
+from typing import TYPE_CHECKING, Any, List, Optional, cast
 
 from nltk.tokenize import sent_tokenize
 
@@ -22,8 +22,6 @@ except Exception:  # pragma: no cover - color output not essential
 
     Fore = _Color
     Style = _Style
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from semantic_router.encoders.base import DenseEncoder
@@ -134,7 +132,8 @@ class SimpleChunker(BaseChunker):
         chunks: List[Chunk] = []
         for i in range(0, len(sentences), self.target_length):
             piece = sentences[i : i + self.target_length]
-            if len(piece) < self.target_length:
+            # Include final chunk even if shorter than target_length
+            if not piece:
                 break
             content = " ".join(piece)
             chunks.append(

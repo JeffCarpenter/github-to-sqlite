@@ -14,7 +14,6 @@ from . import config
 from .embedding_utils import _maybe_load_sqlite_vec, ensure_embedding_tables
 from .build_files import (
     find_build_files,
-    _post_process_build_files,
     parse_build_file,
     directory_tree,
     vector_to_blob,
@@ -763,7 +762,7 @@ def scrape_dependents(repo, verbose=False):
     # Optional dependency:
     from bs4 import BeautifulSoup
 
-    url: str | None = "https://github.com/{}/network/dependents".format(repo)
+    url: str | None = f"https://github.com/{repo}/network/dependents"
     while url:
         if verbose:
             print(url)
@@ -1050,22 +1049,40 @@ def generate_starred_embeddings(
                 pk=("repo_id", "chunk_index"),
             )
 
-        for build_path in find_build_files(repo["full_name"], patterns=patterns):
-            metadata = parse_build_file(os.path.join(repo["full_name"], build_path))
-            cast(sqlite_utils.db.Table, db["repo_build_files"]).upsert(
-                {
-                    "repo_id": repo_id,
-                    "file_path": build_path,
-                    "metadata": json.dumps(metadata),
-                },
-                pk=("repo_id", "file_path"),
-            )
+        # Only analyze build files if the repo path exists locally
+        repo_path = repo["full_name"]
+        if os.path.isdir(repo_path):
+            for build_path in find_build_files(repo_path, patterns=patterns):
+                try:
+                    metadata = parse_build_file(os.path.join(repo_path, build_path))
+                    cast(sqlite_utils.db.Table, db["repo_build_files"]).upsert(
+                        {
+                            "repo_id": repo_id,
+                            "file_path": build_path,
+                            "metadata": json.dumps(metadata),
+                        },
+                        pk=("repo_id", "file_path"),
+                    )
+                except (FileNotFoundError, OSError) as e:
+                    if verbose:
+                        print(f"Warning: Could not parse build file {build_path}: {e}")
+        elif verbose:
+            print(f"Skipping build file analysis for {repo_path} (not a local directory)")
 
+        # Generate directory tree if repo path exists locally
+        tree_data = {}
+        if os.path.isdir(repo_path):
+            try:
+                tree_data = directory_tree(repo_path)
+            except (FileNotFoundError, OSError) as e:
+                if verbose:
+                    print(f"Warning: Could not generate directory tree for {repo_path}: {e}")
+        
         cast(sqlite_utils.db.Table, db["repo_metadata"]).upsert(
             {
                 "repo_id": repo_id,
                 "language": repo.get("language") or "",
-                "directory_tree": json.dumps(directory_tree(repo["full_name"])),
+                "directory_tree": json.dumps(tree_data),
             },
             pk="repo_id",
         )
