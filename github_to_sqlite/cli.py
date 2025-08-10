@@ -9,7 +9,7 @@ import importlib.util
 import sqlite_utils
 import time
 import json
-from typing import Any, Optional, cast
+from typing import Any, Optional, cast, Iterable, Callable
 from github_to_sqlite import utils
 
 
@@ -143,8 +143,6 @@ def pull_requests(db_path, repo, pull_request_ids, auth, load, orgs, state, sear
                 repos_seen.add(pr_repo_url)
             utils.save_pull_requests(db, [pull_request], pr_repo)
     else:
-        from typing import Iterable, Any
-
         repos: Iterable[dict[str, Any]]
         if orgs:
             repos = itertools.chain.from_iterable(
@@ -430,8 +428,6 @@ def commits(db_path, repos, all, auth):
     "Save commits for the specified repos"
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
-
-    from typing import Callable
 
     def stop_when(commit: Any) -> bool:
         try:

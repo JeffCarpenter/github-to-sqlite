@@ -69,9 +69,11 @@ def find_build_files(path: str, patterns: Iterable[str] | None = None) -> List[s
             found.extend(result.stdout.splitlines())
     else:
         for pattern in patterns:
-            for full in pathlib.Path(path).rglob(pattern):
-                if full.is_file():
-                    found.append(str(full))
+            found.extend(
+                str(full)
+                for full in pathlib.Path(path).rglob(pattern)
+                if full.is_file()
+            )
     return _post_process_build_files(found, path)
 
 
