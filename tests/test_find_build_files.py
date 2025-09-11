@@ -2,7 +2,7 @@ import subprocess
 import shutil
 
 
-from github_to_sqlite.utils import find_build_files, _post_process_build_files
+from github_to_sqlite.build_files import find_build_files, _post_process_build_files
 
 
 def test_find_build_files_fd(monkeypatch):
