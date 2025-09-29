@@ -3,7 +3,6 @@ import json
 import pathlib
 import pytest
 import sqlite_utils
-from sqlite_utils.db import ForeignKey
 
 
 @pytest.fixture
