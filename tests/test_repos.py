@@ -98,8 +98,9 @@ def _run_repos(tmpdir):
     result = runner.invoke(
         cli.app,
         [
-            "repos",
+            "--db",
             db_path,
+            "repos",
             "-r",
             "dogsheep/github-to-sqlite",
             "--readme",

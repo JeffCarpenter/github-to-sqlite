@@ -42,7 +42,7 @@ def test_scrape_dependents(requests_mock):
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
-            cli.app, ["scrape-dependents", "scrape.db", "dogsheep/github-to-sqlite"]
+            cli.app, ["--db", "scrape.db", "scrape-dependents", "dogsheep/github-to-sqlite"]
         )
         assert 0 == result.exit_code
         db = sqlite_utils.Database("scrape.db")

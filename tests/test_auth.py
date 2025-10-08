@@ -27,7 +27,7 @@ def test_auth_file(mocked_starred):
     with runner.isolated_filesystem():
         open("auth.json", "w").write(json.dumps({"github_personal_token": "xxx"}))
         result = runner.invoke(
-            cli.app, ["starred", "starred.db"]
+            cli.app, ["--db", "starred.db", "starred"]
         )
         assert 0 == result.exit_code
         assert mocked_starred.called
@@ -39,7 +39,7 @@ def test_auth_environment_variable(mocked_starred, monkeypatch):
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
-            cli.app, ["starred", "starred.db"]
+            cli.app, ["--db", "starred.db", "starred"]
         )
         assert 0 == result.exit_code
         assert mocked_starred.called
