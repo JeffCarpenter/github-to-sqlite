@@ -237,12 +237,12 @@ def repos(
 
 
 def _save_repo_readme(db: sqlite_utils.Database, token: Optional[str], repo_id: int, 
-                      full_name: str, fetch_readme: bool, fetch_readme_html: bool):
+                      full_name: str, readme: bool, readme_html: bool):
     """Helper to fetch and save README content."""
-    if fetch_readme:
+    if readme:
         content = utils.fetch_readme(token, full_name)
         db["repos"].update(repo_id, {"readme": content}, alter=True)
-    if fetch_readme_html:
+    if readme_html:
         content = utils.fetch_readme(token, full_name, html=True)
         db["repos"].update(repo_id, {"readme_html": content}, alter=True)
 
