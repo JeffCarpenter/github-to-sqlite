@@ -236,11 +236,63 @@ All 48 existing tests pass without modification, demonstrating that:
 5. **Pythonic Code:** Used idiomatic Python patterns (enumerate, conditional expressions, Path API)
 6. **Modern APIs:** Updated to use current best practices (timezone-aware datetime, hide_input)
 
+## Typer Context for Dependency Injection (Implemented)
+
+Following Typer best practices, the CLI now uses Context for dependency injection:
+
+**Implementation:**
+```python
+@dataclass
+class AppState:
+    """Application state shared across commands via Context."""
+    db: Optional[sqlite_utils.Database] = None
+    token: Optional[str] = None
+    auth_file: str = "auth.json"
+
+def get_state(ctx: typer.Context, db_path: Optional[str] = None, auth: str = "auth.json") -> AppState:
+    """Get or initialize AppState from Context."""
+    if ctx.obj is None:
+        ctx.obj = AppState()
+    
+    state: AppState = ctx.obj
+    
+    # Initialize database if needed
+    if db_path and state.db is None:
+        state.db = get_db(db_path)
+    
+    # Load token if needed
+    if state.token is None or state.auth_file != auth:
+        state.token = load_token(auth)
+        state.auth_file = auth
+    
+    return state
+
+# In commands:
+@app.command()
+def issues(
+    ctx: typer.Context,
+    db_path: DbPath,
+    repo: RepoArg,
+    auth: AuthFile = "auth.json",
+):
+    state = get_state(ctx, db_path, auth)
+    # Use state.db and state.token
+```
+
+**Benefits:**
+- **Better Composability:** Database and token are managed centrally via Context
+- **Reduced Boilerplate:** No need to call `get_db()` and `load_token()` in every command
+- **Testability:** Context can be easily mocked in tests
+- **Extensibility:** Easy to add more shared state (e.g., configuration, logging)
+- **Typer Best Practice:** Follows recommended patterns from Typer documentation
+
+**Testing:** Added 4 comprehensive tests in `tests/test_context.py` to validate Context behavior
+
 ## Future Improvements
 
 Potential next steps for further improvement:
 
-1. **Dependency Injection:** Could use Typer's Context to share db/token across commands
+1. ~~**Dependency Injection:** Could use Typer's Context to share db/token across commands~~ ✅ **Implemented**
 2. **Error Handling:** Add centralized error handling for common failure modes
 3. **Progress Indicators:** Add more progress bars for long-running operations
 4. **Async Support:** Consider async/await for concurrent API calls
