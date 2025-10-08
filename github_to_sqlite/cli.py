@@ -25,7 +25,6 @@ DbPath = Annotated[str, typer.Argument(help="Path to SQLite database")]
 AuthFile = Annotated[str, typer.Option("-a", "--auth", help="Path to auth.json token file")]
 RepoArg = Annotated[str, typer.Argument(help="Repository (e.g. simonw/datasette)")]
 ReposList = Annotated[List[str], typer.Argument(help="Repositories")]
-Ctx = Annotated[typer.Context, typer.Option(hidden=True)]
 
 
 @dataclass
@@ -143,32 +142,32 @@ def pull_requests(
     auth: AuthFile = "auth.json",
     load: Annotated[Optional[str], typer.Option(help="Load pull-requests JSON from file instead of API")] = None,
     org: Annotated[Optional[List[str]], typer.Option(help="Fetch all pull requests from this GitHub organization")] = None,
-    state: Annotated[Optional[str], typer.Option(help="Only fetch pull requests in this state")] = None,
+    pr_state: Annotated[Optional[str], typer.Option("--state", help="Only fetch pull requests in this state")] = None,
     search: Annotated[Optional[str], typer.Option(help="Find pull requests with a search query")] = None,
 ):
     """Save pull_requests for a specified repository, e.g. simonw/datasette"""
-    app_state = get_state(ctx, db_path, auth)
+    state = get_state(ctx, db_path, auth)
     pull_request_ids = tuple(pull_request or ())
     orgs = org or ()
     
     if load:
-        repo_full = utils.fetch_repo(repo, app_state.token)
-        utils.save_repo(app_state.db, repo_full)
-        utils.save_pull_requests(app_state.db, json.load(open(load)), repo_full)
+        repo_full = utils.fetch_repo(repo, state.token)
+        utils.save_repo(state.db, repo_full)
+        utils.save_pull_requests(state.db, json.load(open(load)), repo_full)
     elif search:
-        _save_searched_prs(app_state.db, app_state.token, search)
+        _save_searched_prs(state.db, state.token, search)
     else:
         repos = (
             itertools.chain.from_iterable(
-                utils.fetch_all_repos(token=app_state.token, org=org_name) for org_name in orgs
-            ) if orgs else [utils.fetch_repo(repo, app_state.token)]
+                utils.fetch_all_repos(token=state.token, org=org_name) for org_name in orgs
+            ) if orgs else [utils.fetch_repo(repo, state.token)]
         )
         for repo_full in repos:
-            utils.save_repo(app_state.db, repo_full)
-            prs = utils.fetch_pull_requests(repo_full["full_name"], state, app_state.token, pull_request_ids)
-            utils.save_pull_requests(app_state.db, prs, repo_full)
+            utils.save_repo(state.db, repo_full)
+            prs = utils.fetch_pull_requests(repo_full["full_name"], pr_state, state.token, pull_request_ids)
+            utils.save_pull_requests(state.db, prs, repo_full)
     
-    finalize_db(app_state.db)
+    finalize_db(state.db)
 
 
 def _save_searched_prs(db: sqlite_utils.Database, token: Optional[str], search: str):
