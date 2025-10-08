@@ -1,7 +1,21 @@
 from setuptools import setup
 import os
+import re
 
-VERSION = "2.9"
+
+def get_version():
+    """Extract version from __init__.py"""
+    init_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "github_to_sqlite",
+        "__init__.py"
+    )
+    with open(init_path, encoding="utf8") as f:
+        content = f.read()
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
+        if match:
+            return match.group(1)
+        raise RuntimeError("Unable to find version string")
 
 
 def get_long_description():
@@ -20,7 +34,7 @@ setup(
     author="Simon Willison",
     url="https://github.com/dogsheep/github-to-sqlite",
     license="Apache License, Version 2.0",
-    version=VERSION,
+    version=get_version(),
     packages=["github_to_sqlite"],
     entry_points="""
         [console_scripts]

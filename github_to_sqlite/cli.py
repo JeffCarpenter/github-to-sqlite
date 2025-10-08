@@ -9,11 +9,9 @@ import time
 import json
 from typing import Optional, List, Annotated
 from github_to_sqlite import utils
+from github_to_sqlite import __version__
 
 app = typer.Typer(help="Save data from GitHub to a SQLite database")
-
-# Version constant
-VERSION = "2.9"
 
 # Reusable option types using Annotated
 DbPath = Annotated[str, typer.Argument(help="Path to SQLite database")]
@@ -24,7 +22,7 @@ ReposList = Annotated[List[str], typer.Argument(help="Repositories")]
 
 def version_callback(value: bool):
     if value:
-        typer.echo(f"github-to-sqlite, version {VERSION}")
+        typer.echo(f"github-to-sqlite, version {__version__}")
         raise typer.Exit()
 
 
