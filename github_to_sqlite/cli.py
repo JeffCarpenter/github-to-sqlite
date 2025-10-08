@@ -7,7 +7,13 @@ import os
 import sqlite_utils
 import time
 import json
-from typing import Optional, List, Annotated
+from typing import Optional, List
+
+try:
+    from typing import Annotated
+except ImportError:
+    from typing_extensions import Annotated
+
 from github_to_sqlite import utils
 from github_to_sqlite import __version__
 
@@ -28,10 +34,12 @@ def version_callback(value: bool):
 
 def load_token(auth: str) -> Optional[str]:
     """Load GitHub token from auth file or environment variable."""
+    token = None
     try:
-        return json.load(open(auth))["github_personal_token"]
-    except (KeyError, FileNotFoundError):
-        return os.environ.get("GITHUB_TOKEN")
+        token = json.load(open(auth)).get("github_personal_token")
+    except FileNotFoundError:
+        pass
+    return token or os.environ.get("GITHUB_TOKEN")
 
 
 def get_db(db_path: str) -> sqlite_utils.Database:
