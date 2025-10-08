@@ -327,6 +327,7 @@ def scrape_dependents(
     try:
         import bs4
     except ImportError:
+        typer.echo("Error: Optional dependency bs4 is needed for this command", err=True)
         raise typer.Exit(code=1)
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
