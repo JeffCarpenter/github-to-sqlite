@@ -1,5 +1,5 @@
 from github_to_sqlite import cli
-from click.testing import CliRunner
+from typer.testing import CliRunner
 import json
 import sqlite_utils
 import pathlib
@@ -42,7 +42,7 @@ def test_scrape_dependents(requests_mock):
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
-            cli.cli, ["scrape-dependents", "scrape.db", "dogsheep/github-to-sqlite"]
+            cli.app, ["scrape-dependents", "scrape.db", "dogsheep/github-to-sqlite"]
         )
         assert 0 == result.exit_code
         db = sqlite_utils.Database("scrape.db")
