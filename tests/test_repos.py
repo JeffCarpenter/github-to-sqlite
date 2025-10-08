@@ -4,7 +4,7 @@ import pathlib
 import sqlite_utils
 from sqlite_utils.db import ForeignKey
 import json
-from click.testing import CliRunner
+from typer.testing import CliRunner
 from github_to_sqlite import cli
 import pytest
 
@@ -96,7 +96,7 @@ def _run_repos(tmpdir):
     runner = CliRunner()
     db_path = str(tmpdir / "test.db")
     result = runner.invoke(
-        cli.cli,
+        cli.app,
         [
             "repos",
             db_path,

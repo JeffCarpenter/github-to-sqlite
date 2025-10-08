@@ -24,9 +24,9 @@ setup(
     packages=["github_to_sqlite"],
     entry_points="""
         [console_scripts]
-        github-to-sqlite=github_to_sqlite.cli:cli
+        github-to-sqlite=github_to_sqlite.cli:app
     """,
-    install_requires=["sqlite-utils>=2.7.2", "requests", "PyYAML"],
+    install_requires=["sqlite-utils>=2.7.2", "requests", "PyYAML", "typer"],
     extras_require={"test": ["pytest", "requests-mock", "bs4"]},
     tests_require=["github-to-sqlite[test]"],
 )

@@ -1,4 +1,4 @@
-from click.testing import CliRunner
+from typer.testing import CliRunner
 from github_to_sqlite import cli
 import json
 import os
@@ -16,7 +16,7 @@ def test_auth_command():
     runner = CliRunner()
     with runner.isolated_filesystem():
         assert [] == os.listdir(".")
-        result = runner.invoke(cli.cli, ["auth"], input="zzz")
+        result = runner.invoke(cli.app, ["auth"], input="zzz\n")
         assert 0 == result.exit_code
         assert ["auth.json"] == os.listdir(".")
         assert {"github_personal_token": "zzz"} == json.load(open("auth.json"))
@@ -27,7 +27,7 @@ def test_auth_file(mocked_starred):
     with runner.isolated_filesystem():
         open("auth.json", "w").write(json.dumps({"github_personal_token": "xxx"}))
         result = runner.invoke(
-            cli.cli, ["starred", "starred.db"], catch_exceptions=False
+            cli.app, ["starred", "starred.db"]
         )
         assert 0 == result.exit_code
         assert mocked_starred.called
@@ -39,7 +39,7 @@ def test_auth_environment_variable(mocked_starred, monkeypatch):
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
-            cli.cli, ["starred", "starred.db"], catch_exceptions=False
+            cli.app, ["starred", "starred.db"]
         )
         assert 0 == result.exit_code
         assert mocked_starred.called

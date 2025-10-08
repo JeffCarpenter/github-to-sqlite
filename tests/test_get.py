@@ -1,4 +1,4 @@
-from click.testing import CliRunner
+from typer.testing import CliRunner
 from github_to_sqlite import cli
 import pytest
 import textwrap
@@ -25,7 +25,7 @@ def mocked_paginated(requests_mock):
 def test_get(mocked_paginated, url):
     runner = CliRunner()
     with runner.isolated_filesystem():
-        result = runner.invoke(cli.cli, ["get", url])
+        result = runner.invoke(cli.app, ["get", url])
         assert 0 == result.exit_code
         expected = textwrap.dedent(
             """
@@ -70,7 +70,7 @@ def test_get_single(mocked_paginated, nl, expected, paginate):
             args.append("--nl")
         if paginate:
             args.append("--paginate")
-        result = runner.invoke(cli.cli, args)
+        result = runner.invoke(cli.app, args)
         assert 0 == result.exit_code
         assert result.output.strip() == expected.strip()
 
@@ -119,7 +119,7 @@ def test_get_paginate(mocked_paginated, nl, expected):
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(
-            cli.cli,
+            cli.app,
             ["get", "https://api.github.com/paginated", "--paginate"]
             + (["--nl"] if nl else []),
         )

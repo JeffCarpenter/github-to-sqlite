@@ -1,4 +1,4 @@
-import click
+import typer
 import datetime
 import itertools
 import pathlib
@@ -7,171 +7,131 @@ import os
 import sqlite_utils
 import time
 import json
+from typing import Optional, List
 from github_to_sqlite import utils
 
-
-@click.group()
-@click.version_option()
-def cli():
-    "Save data from GitHub to a SQLite database"
+app = typer.Typer(help="Save data from GitHub to a SQLite database")
 
 
-@cli.command()
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    default="auth.json",
-    help="Path to save tokens to, defaults to auth.json",
-)
-def auth(auth):
-    "Save authentication credentials to a JSON file"
-    click.echo("Create a GitHub personal user token and paste it here:")
-    click.echo()
-    personal_token = click.prompt("Personal token")
-    if pathlib.Path(auth).exists():
-        auth_data = json.load(open(auth))
+def version_callback(value: bool):
+    if value:
+        version = "2.9"  # Version from setup.py
+        typer.echo(f"github-to-sqlite, version {version}")
+        raise typer.Exit()
+
+
+@app.callback()
+def cli(
+    version: Optional[bool] = typer.Option(
+        None, "--version", callback=version_callback, is_eager=True, help="Show version and exit"
+    ),
+):
+    """Save data from GitHub to a SQLite database"""
+    pass
+
+
+@app.command()
+def auth(
+    auth_file: str = typer.Option(
+        "auth.json",
+        "-a",
+        "--auth",
+        help="Path to save tokens to, defaults to auth.json",
+    ),
+):
+    """Save authentication credentials to a JSON file"""
+    typer.echo("Create a GitHub personal user token and paste it here:")
+    typer.echo()
+    personal_token = typer.prompt("Personal token")
+    if pathlib.Path(auth_file).exists():
+        auth_data = json.load(open(auth_file))
     else:
         auth_data = {}
     auth_data["github_personal_token"] = personal_token
-    open(auth, "w").write(json.dumps(auth_data, indent=4) + "\n")
+    open(auth_file, "w").write(json.dumps(auth_data, indent=4) + "\n")
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repo")
-@click.option(
-    "--issue",
-    "issue_ids",
-    help="Just pull these issue numbers",
-    type=int,
-    multiple=True,
-)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "--load",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True, exists=True),
-    help="Load issues JSON from this file instead of the API",
-)
-def issues(db_path, repo, issue_ids, auth, load):
-    "Save issues for a specified repository, e.g. simonw/datasette"
+@app.command()
+def issues(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repo: str = typer.Argument(..., help="Repository (e.g. simonw/datasette)"),
+    issue: Optional[List[int]] = typer.Option(None, help="Just pull these issue numbers"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    load: Optional[str] = typer.Option(None, help="Load issues JSON from this file instead of the API"),
+):
+    """Save issues for a specified repository, e.g. simonw/datasette"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     repo_full = utils.fetch_repo(repo, token)
     utils.save_repo(db, repo_full)
     if load:
-        issues = json.load(open(load))
+        issues_data = json.load(open(load))
     else:
-        issues = utils.fetch_issues(repo, token, issue_ids)
+        issue_ids = tuple(issue) if issue else ()
+        issues_data = utils.fetch_issues(repo, token, issue_ids)
 
-    issues = list(issues)
-    utils.save_issues(db, issues, repo_full)
+    issues_data = list(issues_data)
+    utils.save_issues(db, issues_data, repo_full)
     utils.ensure_db_shape(db)
 
 
-@cli.command(name="pull-requests")
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repo", required=False)
-@click.option(
-    "--pull-request",
-    "pull_request_ids",
-    help="Just pull these pull-request numbers",
-    type=int,
-    multiple=True,
-)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "--load",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True, exists=True),
-    help="Load pull-requests JSON from this file instead of the API",
-)
-@click.option(
-    "--org",
-    "orgs",
-    help="Fetch all pull requests from this GitHub organization",
-    multiple=True,
-)
-@click.option(
-    "--state",
-    help="Only fetch pull requests in this state",
-)
-@click.option(
-    "--search",
-    help="Find pull requests with a search query",
-)
-def pull_requests(db_path, repo, pull_request_ids, auth, load, orgs, state, search):
-    "Save pull_requests for a specified repository, e.g. simonw/datasette"
+@app.command(name="pull-requests")
+def pull_requests(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repo: Optional[str] = typer.Argument(None, help="Repository (e.g. simonw/datasette)"),
+    pull_request: Optional[List[int]] = typer.Option(None, help="Just pull these pull-request numbers"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    load: Optional[str] = typer.Option(None, help="Load pull-requests JSON from this file instead of the API"),
+    org: Optional[List[str]] = typer.Option(None, help="Fetch all pull requests from this GitHub organization"),
+    state: Optional[str] = typer.Option(None, help="Only fetch pull requests in this state"),
+    search: Optional[str] = typer.Option(None, help="Find pull requests with a search query"),
+):
+    """Save pull_requests for a specified repository, e.g. simonw/datasette"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
+    pull_request_ids = tuple(pull_request) if pull_request else ()
+    orgs = org if org else ()
+    
     if load:
         repo_full = utils.fetch_repo(repo, token)
         utils.save_repo(db, repo_full)
-        pull_requests = json.load(open(load))
-        utils.save_pull_requests(db, pull_requests, repo_full)
+        pull_requests_data = json.load(open(load))
+        utils.save_pull_requests(db, pull_requests_data, repo_full)
     elif search:
         repos_seen = set()
         search += " is:pr"
-        pull_requests = utils.fetch_searched_pulls_or_issues(search, token)
-        for pull_request in pull_requests:
-            pr_repo_url = pull_request["repository_url"]
+        pull_requests_data = utils.fetch_searched_pulls_or_issues(search, token)
+        for pull_request_item in pull_requests_data:
+            pr_repo_url = pull_request_item["repository_url"]
             if pr_repo_url not in repos_seen:
                 pr_repo = utils.fetch_repo(url=pr_repo_url)
                 utils.save_repo(db, pr_repo)
                 repos_seen.add(pr_repo_url)
-            utils.save_pull_requests(db, [pull_request], pr_repo)
+            utils.save_pull_requests(db, [pull_request_item], pr_repo)
     else:
         if orgs:
             repos = itertools.chain.from_iterable(
-                utils.fetch_all_repos(token=token, org=org)
-                for org in orgs
+                utils.fetch_all_repos(token=token, org=org_name)
+                for org_name in orgs
             )
         else:
             repos = [utils.fetch_repo(repo, token)]
         for repo_full in repos:
             utils.save_repo(db, repo_full)
-            repo = repo_full["full_name"]
-            pull_requests = utils.fetch_pull_requests(repo, state, token, pull_request_ids)
-            utils.save_pull_requests(db, pull_requests, repo_full)
+            repo_name = repo_full["full_name"]
+            pull_requests_data = utils.fetch_pull_requests(repo_name, state, token, pull_request_ids)
+            utils.save_pull_requests(db, pull_requests_data, repo_full)
     utils.ensure_db_shape(db)
 
 
-@cli.command(name="issue-comments")
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repo")
-@click.option("--issue", help="Just pull comments for this issue")
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def issue_comments(db_path, repo, issue, auth):
-    "Retrieve issue comments for a specific repository"
+@app.command(name="issue-comments")
+def issue_comments(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repo: str = typer.Argument(..., help="Repository (e.g. simonw/datasette)"),
+    issue: Optional[str] = typer.Option(None, help="Just pull comments for this issue"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Retrieve issue comments for a specific repository"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     for comment in utils.fetch_issue_comments(repo, token, issue):
@@ -179,27 +139,14 @@ def issue_comments(db_path, repo, issue, auth):
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("username", type=str, required=False)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "--load",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True, exists=True),
-    help="Load issues JSON from this file instead of the API",
-)
-def starred(db_path, username, auth, load):
-    "Save repos starred by the specified (or authenticated) username"
+@app.command()
+def starred(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    username: Optional[str] = typer.Argument(None, help="GitHub username"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    load: Optional[str] = typer.Option(None, help="Load issues JSON from this file instead of the API"),
+):
+    """Save repos starred by the specified (or authenticated) username"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     if load:
@@ -217,69 +164,34 @@ def starred(db_path, username, auth, load):
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def stargazers(db_path, repos, auth):
-    "Fetch the users that have starred the specified repositories"
+@app.command()
+def stargazers(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to fetch stargazers for"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Fetch the users that have starred the specified repositories"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     for repo in repos:
         full_repo = utils.fetch_repo(repo, token=token)
         repo_id = utils.save_repo(db, full_repo)
-        stargazers = utils.fetch_stargazers(repo, token)
-        utils.save_stargazers(db, repo_id, stargazers)
+        stargazers_data = utils.fetch_stargazers(repo, token)
+        utils.save_stargazers(db, repo_id, stargazers_data)
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("usernames", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "-r",
-    "--repo",
-    multiple=True,
-    help="Just fetch these repos",
-)
-@click.option(
-    "--load",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True, exists=True),
-    help="Load repos JSON from this file instead of the API",
-)
-@click.option(
-    "--readme",
-    is_flag=True,
-    help="Fetch README into 'readme' column",
-)
-@click.option(
-    "--readme-html",
-    is_flag=True,
-    help="Fetch HTML rendered README into 'readme_html' column",
-)
-def repos(db_path, usernames, auth, repo, load, readme, readme_html):
-    "Save repos owned by the specified (or authenticated) username or organization"
+@app.command()
+def repos(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    usernames: Optional[List[str]] = typer.Argument(None, help="GitHub usernames or organizations"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    repo: Optional[List[str]] = typer.Option(None, "-r", "--repo", help="Just fetch these repos"),
+    load: Optional[str] = typer.Option(None, help="Load repos JSON from this file instead of the API"),
+    readme: bool = typer.Option(False, help="Fetch README into 'readme' column"),
+    readme_html: bool = typer.Option(False, "--readme-html", help="Fetch HTML rendered README into 'readme_html' column"),
+):
+    """Save repos owned by the specified (or authenticated) username or organization"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     if load:
@@ -295,10 +207,10 @@ def repos(db_path, usernames, auth, repo, load, readme, readme_html):
             if not usernames:
                 usernames = [None]
             for username in usernames:
-                for repo in utils.fetch_all_repos(username, token):
-                    repo_id = utils.save_repo(db, repo)
+                for repo_item in utils.fetch_all_repos(username, token):
+                    repo_id = utils.save_repo(db, repo_item)
                     _repo_readme(
-                        db, token, repo_id, repo["full_name"], readme, readme_html
+                        db, token, repo_id, repo_item["full_name"], readme, readme_html
                     )
     utils.ensure_db_shape(db)
 
@@ -312,22 +224,13 @@ def _repo_readme(db, token, repo_id, full_name, readme, readme_html):
         db["repos"].update(repo_id, {"readme_html": readme_html}, alter=True)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def releases(db_path, repos, auth):
-    "Save releases for the specified repos"
+@app.command()
+def releases(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to fetch releases for"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Save releases for the specified repos"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     first = True
@@ -337,27 +240,18 @@ def releases(db_path, repos, auth):
         first = False
         repo_full = utils.fetch_repo(repo, token)
         utils.save_repo(db, repo_full)
-        releases = utils.fetch_releases(repo, token)
-        utils.save_releases(db, releases, repo_full["id"])
+        releases_data = utils.fetch_releases(repo, token)
+        utils.save_releases(db, releases_data, repo_full["id"])
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def tags(db_path, repos, auth):
-    "Save tags for the specified repos"
+@app.command()
+def tags(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to fetch tags for"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Save tags for the specified repos"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     first = True
@@ -367,60 +261,37 @@ def tags(db_path, repos, auth):
         first = False
         repo_full = utils.fetch_repo(repo, token)
         utils.save_repo(db, repo_full)
-        tags = utils.fetch_tags(repo, token)
-        utils.save_tags(db, tags, repo_full["id"])
+        tags_data = utils.fetch_tags(repo, token)
+        utils.save_tags(db, tags_data, repo_full["id"])
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def contributors(db_path, repos, auth):
-    "Save contributors for the specified repos"
+@app.command()
+def contributors(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to fetch contributors for"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Save contributors for the specified repos"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     for repo in repos:
         repo_full = utils.fetch_repo(repo, token)
         utils.save_repo(db, repo_full)
-        contributors = utils.fetch_contributors(repo, token)
-        utils.save_contributors(db, contributors, repo_full["id"])
+        contributors_data = utils.fetch_contributors(repo, token)
+        utils.save_contributors(db, contributors_data, repo_full["id"])
         time.sleep(1)
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "--all",
-    is_flag=True,
-    default=False,
-    help="Load all commits (not just those that have not yet been saved)",
-)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def commits(db_path, repos, all, auth):
-    "Save commits for the specified repos"
+@app.command()
+def commits(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to fetch commits for"),
+    all: bool = typer.Option(False, "--all", help="Load all commits (not just those that have not yet been saved)"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Save commits for the specified repos"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
 
@@ -438,39 +309,25 @@ def commits(db_path, repos, all, auth):
         repo_full = utils.fetch_repo(repo, token)
         utils.save_repo(db, repo_full)
 
-        commits = utils.fetch_commits(repo, token, stop_when)
-        utils.save_commits(db, commits, repo_full["id"])
+        commits_data = utils.fetch_commits(repo, token, stop_when)
+        utils.save_commits(db, commits_data, repo_full["id"])
         time.sleep(1)
 
     utils.ensure_db_shape(db)
 
 
-@cli.command(name="scrape-dependents")
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    is_flag=True,
-    help="Verbose output",
-)
-def scrape_dependents(db_path, repos, auth, verbose):
-    "Scrape dependents for specified repos"
+@app.command(name="scrape-dependents")
+def scrape_dependents(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to scrape dependents for"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
+):
+    """Scrape dependents for specified repos"""
     try:
         import bs4
     except ImportError:
-        raise click.ClickException("Optional dependency bs4 is needed for this command")
+        raise typer.Exit(code=1)
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
 
@@ -511,27 +368,13 @@ def scrape_dependents(db_path, repos, auth, verbose):
     utils.ensure_db_shape(db)
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "-f",
-    "--fetch",
-    is_flag=True,
-    help="Fetch the image data into a BLOB column",
-)
-def emojis(db_path, auth, fetch):
-    "Fetch GitHub supported emojis"
+@app.command()
+def emojis(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    fetch: bool = typer.Option(False, "-f", "--fetch", help="Fetch the image data into a BLOB column"),
+):
+    """Fetch GitHub supported emojis"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     table = db.table("emojis", pk="name")
@@ -540,99 +383,73 @@ def emojis(db_path, auth, fetch):
         # Ensure table has 'image' column
         if "image" not in table.columns_dict:
             table.add_column("image", bytes)
-        with click.progressbar(
-            list(table.rows_where("image is null")),
-            show_pos=True,
-            show_eta=True,
-            show_percent=True,
-        ) as bar:
-            for emoji in bar:
+        rows = list(table.rows_where("image is null"))
+        with typer.progressbar(
+            rows,
+            label="Fetching emoji images",
+        ) as progress:
+            for emoji in progress:
                 table.update(emoji["name"], {"image": utils.fetch_image(emoji["url"])})
 
 
-@cli.command()
-@click.argument("url", type=str)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-@click.option(
-    "--paginate",
-    is_flag=True,
-    help="Paginate through all results",
-)
-@click.option(
-    "--nl",
-    is_flag=True,
-    help="Output newline-delimited JSON",
-)
-@click.option(
-    "--accept",
-    help="Accept header to send, e.g. application/vnd.github.VERSION.html",
-)
-def get(url, auth, paginate, nl, accept):
-    "Make an authenticated HTTP GET against the specified URL"
+@app.command()
+def get(
+    url: str = typer.Argument(..., help="URL to fetch"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+    paginate: bool = typer.Option(False, help="Paginate through all results"),
+    nl: bool = typer.Option(False, help="Output newline-delimited JSON"),
+    accept: Optional[str] = typer.Option(None, help="Accept header to send, e.g. application/vnd.github.VERSION.html"),
+):
+    """Make an authenticated HTTP GET against the specified URL"""
     token = load_token(auth)
     first = True
     should_output_closing_brace = not nl
     while url:
         response = utils.get(url, token, accept=accept)
         if "html" in (response.headers.get("content-type") or ""):
-            click.echo(response.text)
+            typer.echo(response.text)
             return
         items = response.json()
         if isinstance(items, dict):
             if nl:
-                click.echo(json.dumps(items))
+                typer.echo(json.dumps(items))
             else:
-                click.echo(json.dumps(items, indent=4))
+                typer.echo(json.dumps(items, indent=4))
             should_output_closing_brace = False
             break
         if first and not nl:
-            click.echo("[")
+            typer.echo("[")
         for item in items:
             if not first and not nl:
-                click.echo(",")
+                typer.echo(",")
             first = False
             if not nl:
                 to_dump = json.dumps(item, indent=4)
-                click.echo(textwrap.indent(to_dump, "    "), nl=False)
+                typer.echo(textwrap.indent(to_dump, "    "), nl=False)
             else:
-                click.echo(json.dumps(item))
+                typer.echo(json.dumps(item))
         if paginate:
             url = response.links.get("next", {}).get("url")
         else:
             url = None
     if should_output_closing_brace:
-        click.echo("\n]")
+        typer.echo("\n]")
 
 
-@cli.command()
-@click.argument(
-    "db_path",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    required=True,
-)
-@click.argument("repos", type=str, nargs=-1)
-@click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=True),
-    default="auth.json",
-    help="Path to auth.json token file",
-)
-def workflows(db_path, repos, auth):
-    "Fetch details of GitHub Actions workflows for the specified repositories"
+@app.command()
+def workflows(
+    db_path: str = typer.Argument(..., help="Path to SQLite database"),
+    repos: List[str] = typer.Argument(..., help="Repositories to fetch workflows for"),
+    auth: str = typer.Option("auth.json", "-a", "--auth", help="Path to auth.json token file"),
+):
+    """Fetch details of GitHub Actions workflows for the specified repositories"""
     db = sqlite_utils.Database(db_path)
     token = load_token(auth)
     for repo in repos:
         full_repo = utils.fetch_repo(repo, token=token)
         repo_id = utils.save_repo(db, full_repo)
-        workflows = utils.fetch_workflows(token, full_repo["full_name"])
-        for filename, content in workflows.items():
+        workflows_data = utils.fetch_workflows(token, full_repo["full_name"])
+        for filename, content in workflows_data.items():
             utils.save_workflow(db, repo_id, filename, content)
     utils.ensure_db_shape(db)
 
