@@ -137,13 +137,14 @@ def pull_requests(
 
 def _save_searched_prs(db: sqlite_utils.Database, token: Optional[str], search: str):
     """Helper to save PRs from search results."""
-    repos_seen = set()
+    repos_cache = {}
     for pr in utils.fetch_searched_pulls_or_issues(f"{search} is:pr", token):
         pr_repo_url = pr["repository_url"]
-        if pr_repo_url not in repos_seen:
-            utils.save_repo(db, utils.fetch_repo(url=pr_repo_url))
-            repos_seen.add(pr_repo_url)
-        utils.save_pull_requests(db, [pr], utils.fetch_repo(url=pr_repo_url))
+        if pr_repo_url not in repos_cache:
+            repo_full = utils.fetch_repo(url=pr_repo_url, token=token)
+            utils.save_repo(db, repo_full)
+            repos_cache[pr_repo_url] = repo_full
+        utils.save_pull_requests(db, [pr], repos_cache[pr_repo_url])
 
 
 @app.command(name="issue-comments")
@@ -385,7 +386,7 @@ def _insert_dependent_if_new(db: sqlite_utils.Database, repo_id: int, dependent_
         {
             "repo": repo_id,
             "dependent": dependent_id,
-            "first_seen_utc": datetime.datetime.now(datetime.UTC).isoformat(),
+            "first_seen_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         },
         pk=("repo", "dependent"),
         foreign_keys=(("repo", "repos", "id"), ("dependent", "repos", "id")),
