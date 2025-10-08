@@ -24,10 +24,10 @@ def test_context_state_initialization(requests_mock, tmpdir):
     auth_path = tmpdir / "auth.json"
     auth_path.write_text(json.dumps({"github_personal_token": "test_token"}), "utf-8")
     
-    # Run command
+    # Run command (global options before command name)
     result = runner.invoke(
         cli.app,
-        ["repos", db_path, "-r", "dogsheep/github-to-sqlite", "-a", str(auth_path)],
+        ["--db", db_path, "-a", str(auth_path), "repos", "-r", "dogsheep/github-to-sqlite"],
     )
     
     assert result.exit_code == 0
@@ -56,10 +56,10 @@ def test_context_token_reuse(requests_mock, tmpdir):
     auth_path = tmpdir / "auth.json"
     auth_path.write_text(json.dumps({"github_personal_token": "my_token"}), "utf-8")
     
-    # Run command
+    # Run command (global options before command name)
     result = runner.invoke(
         cli.app,
-        ["repos", db_path, "-r", "dogsheep/github-to-sqlite", "-a", str(auth_path)],
+        ["--db", db_path, "-a", str(auth_path), "repos", "-r", "dogsheep/github-to-sqlite"],
     )
     
     assert result.exit_code == 0
@@ -92,10 +92,10 @@ def test_context_db_reuse(requests_mock, tmpdir):
     auth_path = tmpdir / "auth.json"
     auth_path.write_text(json.dumps({"github_personal_token": "test_token"}), "utf-8")
     
-    # Run command
+    # Run command (global options before command name)
     result = runner.invoke(
         cli.app,
-        ["releases", db_path, "dogsheep/github-to-sqlite", "-a", str(auth_path)],
+        ["--db", db_path, "-a", str(auth_path), "releases", "dogsheep/github-to-sqlite"],
     )
     
     assert result.exit_code == 0
@@ -132,17 +132,17 @@ def test_context_multiple_commands_share_state(requests_mock, tmpdir):
     auth_path = tmpdir / "auth.json"
     auth_path.write_text(json.dumps({"github_personal_token": "test_token"}), "utf-8")
     
-    # Run first command
+    # Run first command (global options before command name)
     result1 = runner.invoke(
         cli.app,
-        ["repos", db_path, "-r", "dogsheep/github-to-sqlite", "-a", str(auth_path)],
+        ["--db", db_path, "-a", str(auth_path), "repos", "-r", "dogsheep/github-to-sqlite"],
     )
     assert result1.exit_code == 0
     
     # Run second command (should work with same database)
     result2 = runner.invoke(
         cli.app,
-        ["releases", db_path, "dogsheep/github-to-sqlite", "-a", str(auth_path)],
+        ["--db", db_path, "-a", str(auth_path), "releases", "dogsheep/github-to-sqlite"],
     )
     assert result2.exit_code == 0
     
